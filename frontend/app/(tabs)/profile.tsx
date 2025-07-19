@@ -3,12 +3,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { User, Settings, Bell, Shield, CircleHelp as HelpCircle, Moon, Volume2, Calendar } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState } from 'react';
+import { supabase } from '../../lib/supabase';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [darkModeEnabled, setDarkModeEnabled] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    // Optionally, you can add feedback or navigation here
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -162,6 +168,12 @@ export default function ProfileScreen() {
                   Unlock unlimited recordings, advanced insights, and personalized recommendations
                 </Text>
               </LinearGradient>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.section}>
+            <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
+              <Text style={styles.signOutText}>Sign Out</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -329,5 +341,17 @@ const styles = StyleSheet.create({
     color: '#FEF3C7',
     textAlign: 'center',
     lineHeight: 20,
+  },
+  signOutButton: {
+    backgroundColor: '#EF4444',
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  signOutText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });
