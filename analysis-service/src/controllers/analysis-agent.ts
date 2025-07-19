@@ -4,15 +4,11 @@ import { openai } from "../services/openai";
 import { MAX_FOLLOWUP_ROUNDS } from "../utils/utils";
 import { tools } from "../tools/tools";
 import { executeTool } from "../tools/tools";
-
-
-
-
 export const analysisAgent: RequestHandler = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { messages, model = "google/gemini-2.0-flash-001" } = req.body;
-        if (!messages || !Array.isArray(messages)) {
-            res.status(400).json({ error: "Invalid messages format" });
+        const { transcription, model = "google/gemini-2.0-flash-001" } = req.body;
+        if (!transcription || typeof transcription !== "string") {
+            res.status(400).json({ error: "Missing or invalid transcription" });
             return;
         }
 
@@ -21,95 +17,68 @@ export const analysisAgent: RequestHandler = async (req: Request, res: Response,
             res.status(500).json({ error: "OPENROUTER_API_KEY is not set" });
             return;
         }
-
-        //tool call accumulator
-        const allToolResults = [];
-        let currentMessages = [...messages];
-        let currentResponse;
-        let shouldContinue = true;
-        let roundsCompleted = 0;
-
+        const messages = [
+            {
+                role: "system" as const,
+                content: "You are a helpful assistant that analyzes journal entries to identify emotions, struggles, and gratitude as JSON. After analysis, provide a brief reflection for the user."
+            },
+            {
+                role: "user" as const,
+                content: `Analyze this journal entry: "${transcription}"`
+            }
+        ];
 
         const firstResponse = await openai.chat.completions.create({
             model,
-            messages,
-            tools: tools,
+            messages: messages as any,
+            tools,
         });
 
-        currentResponse = firstResponse;
-
-        while (shouldContinue && roundsCompleted < MAX_FOLLOWUP_ROUNDS) {
-            const assistantMessage = currentResponse.choices?.[0]?.message;
-            if (!assistantMessage) {
-                logger.error("No message in the response");
-                res.status(500).json({ error: "No message in the response" });
-                return;
-            }
-            if(!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-                logger.info("No tool calls in the response, ending analysis");
-                shouldContinue = false;
-                break;
-            }   
-            console.log(`Rounds completed: ${roundsCompleted + 1}`);
-            const toolResults = assistantMessage.tool_calls.map(async (toolCall) => {
-                const toolName = toolCall.function?.name;
-                if (!toolName) {
-                    logger.error("Tool call does not have a function name");
-                    return;
-                }
-                const parameters = toolCall.function?.arguments;
-                if (!parameters) {
-                    logger.error("Tool call does not have parameters");
-                    return;
-                }
+        const assistantMessage = firstResponse.choices?.[0]?.message;
+        let analysis = null;
+        let toolResults = [];
+        if (assistantMessage?.tool_calls && assistantMessage.tool_calls.length > 0) {
+            const toolCall = assistantMessage.tool_calls[0];
+            const parameters = toolCall.function?.arguments;
+            if (parameters) {
                 try {
-                    // Parse the parameters from JSON string to object
                     const parsedParameters = JSON.parse(parameters);
-                    logger.info(`Executing tool ${toolName} with parameters: ${JSON.stringify(parsedParameters)}`);
-                    const result = await executeTool(toolName, parsedParameters);
-                    return { tool_call_id: toolCall.id, toolName, result };
+                    logger.info(`Executing tool ${toolCall.function?.name} with parameters: ${JSON.stringify(parsedParameters)}`);
+                    const result = await executeTool(toolCall.function?.name, parsedParameters);
+                    analysis = result;
+                    toolResults.push({ tool_call_id: toolCall.id, toolName: toolCall.function?.name, result });
                 } catch (error: any) {
-                    logger.error(`Error executing tool ${toolName}: ${error.message}`);
+                    logger.error(`Error executing tool ${toolCall.function?.name}: ${error.message}`);
                     logger.error(`Parameters received: ${parameters}`);
                     logger.error(`Error: ${error.message}`);
-                    return { toolName, error: error.message };
+                    toolResults.push({ toolName: toolCall.function?.name, error: error.message });
                 }
-            });
-            const resolvedToolResults = await Promise.all(toolResults);
-            allToolResults.push(...resolvedToolResults);
-            currentMessages.push(assistantMessage);
-
-            const toolResponseMessage = resolvedToolResults.map((result) => ({
-                role: "tool",
-                tool_call_id: result?.tool_call_id,
-                name: result?.toolName,
-                content: JSON.stringify(result?.result || result?.error || {}),
-            }));
-            currentMessages.push(...toolResponseMessage);
-
-
-            if (roundsCompleted < MAX_FOLLOWUP_ROUNDS - 1) {
-                const followupResponse = await openai.chat.completions.create({
-                    model,
-                    messages: currentMessages,
-                    tools: tools,
-                });
-                currentResponse = followupResponse;
-                roundsCompleted++;
-            } else {
-                const finalResponse = await openai.chat.completions.create({
-                    model,
-                    messages: currentMessages,
-                    tools: tools,
-                });
-                currentResponse = finalResponse;
-                shouldContinue = false;
             }
-
         }
+
+        // 4. Ask for a reflection (follow-up prompt)
+        const reflectionPrompt = [
+            ...messages,
+            {
+                role: "assistant" as const,
+                content: `Analysis: ${JSON.stringify(analysis)}`
+            },
+            {
+                role: "user" as const,
+                content: "Based on this analysis, provide a brief, empathetic reflection for the user."
+            }
+        ];
+        const reflectionResponse = await openai.chat.completions.create({
+            model,
+            messages: reflectionPrompt as any // Same as above, cast if needed
+        });
+        const reflection = reflectionResponse.choices?.[0]?.message?.content;
+
+        // 5. Respond
         res.json({
-            analysis: currentResponse.choices?.[0]?.message?.content || "",
-            toolResults: allToolResults,
+            analysis,
+            reflection,
+            toolResults,
         });
 
     } catch (error: any) {

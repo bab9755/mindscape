@@ -48,7 +48,7 @@ export const executeTool = async (toolName: string, parameters: any): Promise<an
         const response = await openai.chat.completions.create({
             model: "openai/gpt-4o-mini",
             messages: [
-                { role: "system", content: "You are a helpful assistant that analyzes journal entries to identify emotions, struggles, and gratitude as json format" },
+                { role: "system", content: "You are a helpful assistant that analyzes journal entries to identify emotions, struggles, and gratitude as json format, each being arrays of strings" },
                 { role: "user", content: transcription }
             ],
             response_format: { type: "json_object" }
@@ -69,6 +69,3 @@ export const tools = [
     type: "function" as const
 }));
 
-
-
-console.log(executeTool("analyse_entry", { transcription: "I feel fat" }));
